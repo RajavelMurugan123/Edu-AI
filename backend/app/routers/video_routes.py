@@ -1,0 +1,129 @@
+import os
+import uuid
+import shutil
+
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, status
+from sqlalchemy.orm import Session
+
+from app.database import get_db
+from app.models import User, Video, VideoStatus, TranscriptSegment
+from app.schemas import VideoOut, TranscriptSegmentOut
+from app.auth import require_admin, get_current_user
+from app.tasks import transcribe_video
+
+router = APIRouter(prefix="/videos", tags=["videos"])
+
+UPLOAD_DIR = "uploads"
+os.makedirs(UPLOAD_DIR, exist_ok=True)
+
+ALLOWED_EXTENSIONS = {".mp4", ".mov", ".mkv", ".avi", ".webm"}
+
+
+@router.get("", response_model=list[VideoOut])
+def list_videos(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    return (
+        db.query(Video)
+        .filter(Video.status == VideoStatus.ready)
+        .order_by(Video.created_at.desc())
+        .all()
+    )
+
+
+@router.get("/{video_id}", response_model=VideoOut)
+def get_video(
+    video_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    video = db.query(Video).filter(Video.id == video_id).first()
+    if not video:
+        raise HTTPException(status_code=404, detail="Video not found")
+    return video
+
+
+@router.get("/{video_id}/transcript", response_model=list[TranscriptSegmentOut])
+def get_video_transcript(
+    video_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Returns the full timestamped transcript for one video, ordered by time."""
+    return (
+        db.query(TranscriptSegment)
+        .filter(TranscriptSegment.video_id == video_id)
+        .order_by(TranscriptSegment.start_time)
+        .all()
+    )
+
+
+@router.get("/admin/all", response_model=list[VideoOut])
+def admin_list_all_videos(
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_admin),
+):
+    return db.query(Video).order_by(Video.created_at.desc()).all()
+
+
+@router.post("/upload", response_model=VideoOut, status_code=status.HTTP_201_CREATED)
+def upload_video(
+    title: str = Form(...),
+    description: str = Form(""),
+    category: str = Form(...),
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_admin),
+):
+    ext = os.path.splitext(file.filename)[1].lower()
+    if ext not in ALLOWED_EXTENSIONS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported file type '{ext}'. Allowed: {', '.join(ALLOWED_EXTENSIONS)}",
+        )
+
+    video_id = uuid.uuid4()
+    saved_filename = f"{video_id}{ext}"
+    saved_path = os.path.join(UPLOAD_DIR, saved_filename)
+
+    with open(saved_path, "wb") as buffer:
+        shutil.copyfileobj(file.file, buffer)
+
+    video = Video(
+        id=video_id,
+        title=title,
+        description=description,
+        category=category,
+        file_url=f"/uploads/{saved_filename}",
+        status=VideoStatus.uploading,
+        uploaded_by=admin.id,
+    )
+    db.add(video)
+    db.commit()
+    db.refresh(video)
+
+    transcribe_video.delay(str(video.id))
+
+    return video
+
+
+@router.delete("/{video_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_video(
+    video_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_admin),
+):
+    video = db.query(Video).filter(Video.id == video_id).first()
+    if not video:
+        raise HTTPException(status_code=404, detail="Video not found")
+
+    db.query(TranscriptSegment).filter(TranscriptSegment.video_id == video_id).delete()
+
+    file_path = video.file_url.lstrip("/")
+    if os.path.exists(file_path):
+        os.remove(file_path)
+
+    db.delete(video)
+    db.commit()
+    return None
