@@ -71,7 +71,7 @@ def admin_list_all_videos(
 def upload_video(
     title: str = Form(...),
     description: str = Form(""),
-    category: str = Form(...),
+    category: str = Form(""),
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
     admin: User = Depends(require_admin),

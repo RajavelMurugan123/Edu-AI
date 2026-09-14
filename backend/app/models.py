@@ -58,3 +58,15 @@ class TranscriptSegment(Base):
     text = Column(Text, nullable=False)
     embedding = Column(Text, nullable=True)  # JSON-encoded list of floats
     created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class ChatMessage(Base):
+    __tablename__ = "chat_messages"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False, index=True)
+    video_id = Column(UUID(as_uuid=True), ForeignKey("videos.id"), nullable=False, index=True)
+    role = Column(String, nullable=False)  # "user" | "assistant"
+    text = Column(Text, nullable=False)
+    referenced_timestamps = Column(Text, nullable=True)  # JSON list of floats
+    created_at = Column(DateTime, default=datetime.utcnow)

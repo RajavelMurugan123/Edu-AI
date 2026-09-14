@@ -4,6 +4,7 @@ from app.celery_app import celery_app
 from app.database import SessionLocal
 from app.models import Video, VideoStatus, TranscriptSegment
 from app.services.embeddings import embed_text, embedding_to_json
+from app.services.llm import call_llm
 
 _model = None
 
@@ -13,6 +14,24 @@ def get_model():
     if _model is None:
         _model = whisper.load_model("base")
     return _model
+
+
+def detect_category(full_text: str) -> str:
+    """Ask the LLM to pick a short category label from the transcript content."""
+    prompt = f"""Based on this video transcript, output ONE short category label
+(1-3 words, e.g. "Python", "Java", "Machine Learning", "Web Development", "RAG",
+"AI","AI Agents", "SQL", "DevOps"). Pick whatever best fits the actual content.
+Return ONLY the category label, nothing else — no punctuation, no explanation.
+
+Transcript:
+{full_text[:4000]}
+
+Category:"""
+    try:
+        category = call_llm(prompt).strip()
+        return category[:40] if category else "Uncategorized"
+    except Exception:
+        return "Uncategorized"
 
 
 @celery_app.task(name="transcribe_video")
@@ -33,12 +52,14 @@ def transcribe_video(video_id: str):
 
         db.query(TranscriptSegment).filter(TranscriptSegment.video_id == video.id).delete()
 
+        all_text_parts = []
         for seg in result["segments"]:
             text = seg["text"].strip()
             if not text:
                 continue
 
             vector = embed_text(text)
+            all_text_parts.append(text)
 
             segment = TranscriptSegment(
                 video_id=video.id,
@@ -51,6 +72,13 @@ def transcribe_video(video_id: str):
 
         db.commit()
         print(f"Saved {len(result['segments'])} segments with embeddings for '{video.title}'")
+
+        # Auto-detect category from the full transcript, but only if the
+        # admin left it blank — an admin-provided category is respected.
+        if not video.category or video.category.strip() == "":
+            full_text = " ".join(all_text_parts)
+            video.category = detect_category(full_text)
+            print(f"Auto-detected category for '{video.title}': {video.category}")
 
         video.status = VideoStatus.ready
         db.commit()

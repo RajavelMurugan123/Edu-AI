@@ -2,7 +2,13 @@ import { useEffect, useRef, useState } from "react";
 import { useParams, useSearchParams, useNavigate } from "react-router-dom";
 import ReactMarkdown from "react-markdown";
 import { videoSearch } from "../api/search";
-import { sendChatMessage, getVideoSummary, getRelatedVideos, getSuggestedQuestions } from "../api/chat";
+import {
+  streamChatMessage,
+  clearChatHistory,
+  getVideoSummary,
+  getRelatedVideos,
+  getSuggestedQuestions,
+} from "../api/chat";
 import api from "../api/client";
 
 const STATIC_CHIPS = [
@@ -27,6 +33,7 @@ export default function WatchPage() {
   const [chatMessages, setChatMessages] = useState([]);
   const [chatInput, setChatInput] = useState("");
   const [chatLoading, setChatLoading] = useState(false);
+  const [historyLoaded, setHistoryLoaded] = useState(false);
   const [dynamicChips, setDynamicChips] = useState([]);
 
   useEffect(() => { api.get(`/videos/${videoId}`).then((res) => setVideo(res.data)); }, [videoId]);
@@ -35,6 +42,13 @@ export default function WatchPage() {
     const t = searchParams.get("t");
     if (t && videoRef.current) videoRef.current.currentTime = parseFloat(t);
   }, [video, searchParams]);
+
+  // Chat starts fresh every time this page loads / the video changes —
+  // history is NOT auto-restored from the server.
+  useEffect(() => {
+    setChatMessages([]);
+    setHistoryLoaded(true);
+  }, [videoId]);
 
   useEffect(() => {
     if (!videoId) return;
@@ -66,13 +80,42 @@ export default function WatchPage() {
   async function sendQuestion(message) {
     setChatMessages((prev) => [...prev, { role: "user", text: message }]);
     setChatLoading(true);
+
+    setChatMessages((prev) => [...prev, { role: "assistant", text: "", streaming: true, timestamps: [] }]);
+
     try {
       const currentTime = videoRef.current?.currentTime || 0;
-      const data = await sendChatMessage(videoId, message, currentTime);
-      setChatMessages((prev) => [...prev, { role: "assistant", text: data.answer, timestamps: data.referenced_timestamps }]);
+      await streamChatMessage(videoId, message, currentTime, {
+        onMeta: (timestamps) => {
+          setChatMessages((prev) => {
+            const next = [...prev];
+            next[next.length - 1] = { ...next[next.length - 1], timestamps };
+            return next;
+          });
+        },
+        onChunk: (chunk) => {
+          setChatMessages((prev) => {
+            const next = [...prev];
+            const last = next[next.length - 1];
+            next[next.length - 1] = { ...last, text: last.text + chunk };
+            return next;
+          });
+        },
+      });
+      setChatMessages((prev) => {
+        const next = [...prev];
+        next[next.length - 1] = { ...next[next.length - 1], streaming: false };
+        return next;
+      });
     } catch {
-      setChatMessages((prev) => [...prev, { role: "assistant", text: "Sorry, I couldn't answer that. Try again.", error: true }]);
-    } finally { setChatLoading(false); }
+      setChatMessages((prev) => {
+        const next = [...prev];
+        next[next.length - 1] = { role: "assistant", text: "Sorry, I couldn't answer that. Try again.", error: true };
+        return next;
+      });
+    } finally {
+      setChatLoading(false);
+    }
   }
 
   async function handleChatSend(e) {
@@ -101,6 +144,11 @@ export default function WatchPage() {
     } catch {
       setChatMessages((prev) => [...prev, { role: "assistant", text: "Something went wrong.", error: true }]);
     } finally { setChatLoading(false); }
+  }
+
+  async function handleClearChat() {
+    await clearChatHistory(videoId);
+    setChatMessages([]);
   }
 
   if (!video) return <div className="page">Loading...</div>;
@@ -144,10 +192,15 @@ export default function WatchPage() {
         </div>
 
         <div className="card card-pad chat-panel">
-          <h3 style={{ marginTop: 0, marginBottom: 14, fontSize: 15 }}>Ask about this video</h3>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+            <h3 style={{ margin: 0, fontSize: 15 }}>Ask about this video</h3>
+            {chatMessages.length > 0 && (
+              <button className="btn btn-sm" onClick={handleClearChat}>Clear chat</button>
+            )}
+          </div>
 
           <div className="chat-messages">
-            {chatMessages.length === 0 && (
+            {historyLoaded && chatMessages.length === 0 && (
               <div>
                 <p style={{ color: "var(--color-text-secondary)", fontSize: 13 }}>
                   Curious about what you're watching? Ask below, or try one of these:
@@ -160,9 +213,14 @@ export default function WatchPage() {
 
             {chatMessages.map((m, i) => (
               <div key={i} className={`chat-bubble ${m.role}${m.error ? " error" : ""}`}>
-                {m.role === "assistant" ? <ReactMarkdown>{m.text}</ReactMarkdown> : m.text}
+                {m.role === "assistant" ? (
+                  <>
+                    <ReactMarkdown>{m.text || " "}</ReactMarkdown>
+                    {m.streaming && <span className="typing-cursor" />}
+                  </>
+                ) : m.text}
 
-                {m.timestamps && m.timestamps.length > 0 && (
+                {!m.streaming && m.timestamps && m.timestamps.length > 0 && (
                   <div style={{ marginTop: 8, display: "flex", gap: 6, flexWrap: "wrap" }}>
                     {m.timestamps.map((t, idx) => (
                       <span key={idx} className="timestamp-chip" onClick={() => jumpTo(t)}>{formatTime(t)}</span>
@@ -182,12 +240,11 @@ export default function WatchPage() {
                 )}
               </div>
             ))}
-            {chatLoading && <p style={{ color: "var(--color-text-muted)", fontSize: 13 }}>Thinking...</p>}
             <div ref={chatEndRef} />
           </div>
 
           <form onSubmit={handleChatSend} className="search-bar" style={{ marginTop: 12 }}>
-            <input className="input" placeholder="Ask a question..." value={chatInput} onChange={(e) => setChatInput(e.target.value)} />
+            <input className="input" placeholder="Ask a question..." value={chatInput} onChange={(e) => setChatInput(e.target.value)} disabled={chatLoading} />
             <button className="btn btn-primary" type="submit" disabled={chatLoading}>Send</button>
           </form>
         </div>

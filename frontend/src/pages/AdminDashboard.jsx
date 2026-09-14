@@ -17,8 +17,8 @@ export default function AdminDashboard() {
   async function handleUpload(e) {
     e.preventDefault();
     setError("");
-    if (!form.title || !form.category || !form.file) {
-      setError("Title, category, and a video file are all required.");
+    if (!form.title || !form.file) {
+      setError("Title and a video file are required.");
       return;
     }
     setUploading(true);
@@ -76,7 +76,7 @@ export default function AdminDashboard() {
           <p className="section-label" style={{ marginBottom: 16 }}>Upload a new video</p>
           <form onSubmit={handleUpload} className="form-row">
             <input className="input" placeholder="Title" value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} />
-            <input className="input" placeholder="Category (e.g. Java)" value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })} />
+            <input className="input" placeholder="Category (optional — AI detects it if left blank)" value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })} />
             <input className="input" placeholder="Description (optional)" value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} />
             <input type="file" accept="video/*" onChange={(e) => setForm({ ...form, file: e.target.files[0] })} />
             <button className="btn btn-primary" type="submit" disabled={uploading}>
@@ -102,7 +102,7 @@ export default function AdminDashboard() {
                 {videos.map((v) => (
                   <tr key={v.id}>
                     <td style={{ fontWeight: 600 }}>{v.title}</td>
-                    <td>{v.category}</td>
+                    <td>{v.category || "—"}</td>
                     <td><span className={`badge badge-${v.status}`}>{v.status}</span></td>
                     <td style={{ textAlign: "right" }}>
                       <button className="btn btn-danger btn-sm" onClick={() => handleDelete(v.id)}>Delete</button>
