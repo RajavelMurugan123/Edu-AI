@@ -58,3 +58,41 @@ class TranscriptSegmentOut(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class VideoChapterOut(BaseModel):
+    id: uuid.UUID
+    video_id: uuid.UUID
+    start_time: float
+    title: str
+
+    class Config:
+        from_attributes = True
+
+
+class QuizQuestionOut(BaseModel):
+    id: uuid.UUID
+    question: str
+    options: list[str]
+    timestamp: float | None
+
+    class Config:
+        from_attributes = True
+
+
+class QuizSubmitRequest(BaseModel):
+    answers: dict[str, int]
+
+
+class QuizResultOut(BaseModel):
+    score: int
+    total: int
+    correct_answers: dict[str, int]
+
+
+class QuizDashboardItem(BaseModel):
+    video_id: uuid.UUID
+    title: str
+    category: str
+    best_score: int | None
+    total_questions: int | None

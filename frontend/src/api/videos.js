@@ -19,7 +19,7 @@ export async function uploadVideo({ title, description, category, file }) {
   const formData = new FormData();
   formData.append("title", title);
   formData.append("description", description || "");
-  formData.append("category", category);
+  formData.append("category", category || "");
   formData.append("file", file);
 
   const response = await api.post("/videos/upload", formData, {
@@ -34,5 +34,10 @@ export async function deleteVideo(videoId) {
 
 export async function getVideoTranscript(videoId) {
   const response = await api.get(`/videos/${videoId}/transcript`);
+  return response.data;
+}
+
+export async function getVideoChapters(videoId) {
+  const response = await api.get(`/videos/${videoId}/chapters`);
   return response.data;
 }

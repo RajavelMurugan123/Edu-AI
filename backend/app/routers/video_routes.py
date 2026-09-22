@@ -6,8 +6,8 @@ from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, s
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models import User, Video, VideoStatus, TranscriptSegment
-from app.schemas import VideoOut, TranscriptSegmentOut
+from app.models import User, Video, VideoStatus, TranscriptSegment, VideoChapter, QuizQuestion, QuizAttempt, ChatMessage
+from app.schemas import VideoOut, TranscriptSegmentOut, VideoChapterOut
 from app.auth import require_admin, get_current_user
 from app.tasks import transcribe_video
 
@@ -50,11 +50,24 @@ def get_video_transcript(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Returns the full timestamped transcript for one video, ordered by time."""
     return (
         db.query(TranscriptSegment)
         .filter(TranscriptSegment.video_id == video_id)
         .order_by(TranscriptSegment.start_time)
+        .all()
+    )
+
+
+@router.get("/{video_id}/chapters", response_model=list[VideoChapterOut])
+def get_video_chapters(
+    video_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    return (
+        db.query(VideoChapter)
+        .filter(VideoChapter.video_id == video_id)
+        .order_by(VideoChapter.start_time)
         .all()
     )
 
@@ -119,6 +132,10 @@ def delete_video(
         raise HTTPException(status_code=404, detail="Video not found")
 
     db.query(TranscriptSegment).filter(TranscriptSegment.video_id == video_id).delete()
+    db.query(VideoChapter).filter(VideoChapter.video_id == video_id).delete()
+    db.query(QuizQuestion).filter(QuizQuestion.video_id == video_id).delete()
+    db.query(QuizAttempt).filter(QuizAttempt.video_id == video_id).delete()
+    db.query(ChatMessage).filter(ChatMessage.video_id == video_id).delete()
 
     file_path = video.file_url.lstrip("/")
     if os.path.exists(file_path):

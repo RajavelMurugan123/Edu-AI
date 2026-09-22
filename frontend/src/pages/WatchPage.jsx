@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { useParams, useSearchParams, useNavigate } from "react-router-dom";
 import ReactMarkdown from "react-markdown";
 import { videoSearch } from "../api/search";
+import { getVideoChapters } from "../api/videos";
 import {
   streamChatMessage,
   clearChatHistory,
@@ -14,7 +15,6 @@ import api from "../api/client";
 const STATIC_CHIPS = [
   { label: "Summarise the video", action: "summary" },
   { label: "Recommend related content", action: "related" },
-  { label: "Quiz me", action: "chat", message: "Create a short 3-question quiz based on this video's content." },
 ];
 
 export default function WatchPage() {
@@ -30,6 +30,10 @@ export default function WatchPage() {
   const [searching, setSearching] = useState(false);
   const [searched, setSearched] = useState(false);
 
+  const [chapters, setChapters] = useState([]);
+  const [currentTime, setCurrentTime] = useState(0);
+  const [chaptersExpanded, setChaptersExpanded] = useState(true);
+
   const [chatMessages, setChatMessages] = useState([]);
   const [chatInput, setChatInput] = useState("");
   const [chatLoading, setChatLoading] = useState(false);
@@ -43,8 +47,6 @@ export default function WatchPage() {
     if (t && videoRef.current) videoRef.current.currentTime = parseFloat(t);
   }, [video, searchParams]);
 
-  // Chat starts fresh every time this page loads / the video changes —
-  // history is NOT auto-restored from the server.
   useEffect(() => {
     setChatMessages([]);
     setHistoryLoaded(true);
@@ -55,6 +57,11 @@ export default function WatchPage() {
     getSuggestedQuestions(videoId)
       .then((data) => setDynamicChips((data.questions || []).map((q) => ({ label: q, action: "chat", message: q }))))
       .catch(() => setDynamicChips([]));
+  }, [videoId]);
+
+  useEffect(() => {
+    if (!videoId) return;
+    getVideoChapters(videoId).then(setChapters).catch(() => setChapters([]));
   }, [videoId]);
 
   useEffect(() => { chatEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [chatMessages]);
@@ -80,7 +87,6 @@ export default function WatchPage() {
   async function sendQuestion(message) {
     setChatMessages((prev) => [...prev, { role: "user", text: message }]);
     setChatLoading(true);
-
     setChatMessages((prev) => [...prev, { role: "assistant", text: "", streaming: true, timestamps: [] }]);
 
     try {
@@ -155,16 +161,57 @@ export default function WatchPage() {
 
   const allChips = [...STATIC_CHIPS, ...dynamicChips];
   const maxScore = results.length ? Math.max(...results.map((r) => r.score)) : 1;
+  const activeChapterIndex = chapters.reduce((activeIdx, ch, i) => (ch.start_time <= currentTime ? i : activeIdx), -1);
 
   return (
     <div className="page">
-      <button className="btn" onClick={() => navigate("/")} style={{ marginBottom: 16 }}>&larr; Back to browse</button>
+      <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
+        <button className="btn" onClick={() => navigate("/")}>&larr; Back to browse</button>
+        <button className="btn btn-primary" onClick={() => navigate(`/watch/${videoId}/quiz`)}>Take quiz</button>
+      </div>
 
       <div className="watch-layout">
         <div>
-          <video ref={videoRef} src={`http://localhost:8000${video.file_url}`} controls className="video-player" />
+          <video
+            ref={videoRef}
+            src={`http://localhost:8000${video.file_url}`}
+            controls
+            className="video-player"
+            onTimeUpdate={(e) => setCurrentTime(e.target.currentTime)}
+          />
           <h2 style={{ margin: "16px 0 2px" }}>{video.title}</h2>
           <p style={{ color: "var(--color-text-secondary)", margin: "0 0 16px" }}>{video.category}</p>
+
+          {chapters.length > 0 && (
+            <div className="card card-pad chapters-card">
+              <div className="chapters-header" onClick={() => setChaptersExpanded(!chaptersExpanded)}>
+                <span className="chapters-header-title">Key moments</span>
+                <svg className={`chapters-chevron ${chaptersExpanded ? "" : "collapsed"}`} width="18" height="18" viewBox="0 0 24 24" fill="none">
+                  <path d="M6 9l6 6 6-6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+              </div>
+
+              {chaptersExpanded && (
+                <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                  {chapters.map((ch, i) => (
+                    <div
+                      key={ch.id}
+                      className={`chapter-row-yt ${i === activeChapterIndex ? "active" : ""}`}
+                      onClick={() => jumpTo(ch.start_time)}
+                    >
+                      <div className="chapter-thumb">
+                        <span className="chapter-thumb-time">{formatTime(ch.start_time)}</span>
+                      </div>
+                      <div className="chapter-info">
+                        <div className="chapter-info-time">{formatTime(ch.start_time)}</div>
+                        <div className="chapter-info-title">{ch.title}</div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
 
           <form onSubmit={handleSearch} className="search-bar" style={{ marginBottom: 4 }}>
             <input className="input" placeholder="Search this video, e.g. for loop" value={query} onChange={(e) => setQuery(e.target.value)} />

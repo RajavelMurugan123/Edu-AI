@@ -2,7 +2,7 @@ import uuid
 import enum
 from datetime import datetime
 
-from sqlalchemy import Column, String, DateTime, Enum, ForeignKey, Float, Text
+from sqlalchemy import Column, String, DateTime, Enum, ForeignKey, Float, Text, Integer
 from sqlalchemy.dialects.postgresql import UUID
 
 from app.database import Base
@@ -45,7 +45,7 @@ class Video(Base):
     uploaded_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
     cached_summary = Column(Text, nullable=True)
-    cached_suggested_questions = Column(Text, nullable=True)  # JSON string
+    cached_suggested_questions = Column(Text, nullable=True)
 
 
 class TranscriptSegment(Base):
@@ -56,7 +56,7 @@ class TranscriptSegment(Base):
     start_time = Column(Float, nullable=False)
     end_time = Column(Float, nullable=False)
     text = Column(Text, nullable=False)
-    embedding = Column(Text, nullable=True)  # JSON-encoded list of floats
+    embedding = Column(Text, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
@@ -66,7 +66,40 @@ class ChatMessage(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False, index=True)
     video_id = Column(UUID(as_uuid=True), ForeignKey("videos.id"), nullable=False, index=True)
-    role = Column(String, nullable=False)  # "user" | "assistant"
+    role = Column(String, nullable=False)
     text = Column(Text, nullable=False)
-    referenced_timestamps = Column(Text, nullable=True)  # JSON list of floats
+    referenced_timestamps = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class VideoChapter(Base):
+    __tablename__ = "video_chapters"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    video_id = Column(UUID(as_uuid=True), ForeignKey("videos.id"), nullable=False, index=True)
+    start_time = Column(Float, nullable=False)
+    title = Column(String, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class QuizQuestion(Base):
+    __tablename__ = "quiz_questions"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    video_id = Column(UUID(as_uuid=True), ForeignKey("videos.id"), nullable=False, index=True)
+    question = Column(Text, nullable=False)
+    options = Column(Text, nullable=False)
+    correct_index = Column(Integer, nullable=False)
+    timestamp = Column(Float, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class QuizAttempt(Base):
+    __tablename__ = "quiz_attempts"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False, index=True)
+    video_id = Column(UUID(as_uuid=True), ForeignKey("videos.id"), nullable=False, index=True)
+    score = Column(Integer, nullable=False)
+    total = Column(Integer, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)

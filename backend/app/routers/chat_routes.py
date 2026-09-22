@@ -74,7 +74,7 @@ Format your answer using Markdown:
 
 Transcript excerpts:
 {transcript_context}
-
+/.,201
 Recent conversation:
 {history_text}
 
@@ -232,7 +232,7 @@ Summary:"""
 @router.get("/{video_id}/related")
 def related_videos(
     video_id: uuid.UUID,
-    top_k: int = 4,
+    top_k: int = 6,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
