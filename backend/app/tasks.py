@@ -1,10 +1,12 @@
+import json
 import whisper
 
 from app.celery_app import celery_app
 from app.database import SessionLocal
-from app.models import Video, VideoStatus, TranscriptSegment, VideoChapter
+from app.models import Video, VideoStatus, TranscriptSegment, VideoChapter, QuizQuestion
 from app.services.embeddings import embed_text, embedding_to_json
 from app.services.llm import call_llm
+from app.routers.quiz_routes import generate_quiz_questions
 
 _model = None
 
@@ -23,8 +25,6 @@ def get_model():
 
 
 def detect_category(full_text: str) -> str:
-    """Pick the closest-fitting GENERAL category from a fixed list,
-    rather than inventing a new specific label each time."""
     category_list = ", ".join(GENERAL_CATEGORIES)
     prompt = f"""Based on this video transcript, pick the ONE category that best
 fits from this exact list — do not invent a new category, choose only from
@@ -65,9 +65,7 @@ Transcript:
 Chapters:"""
     try:
         raw = call_llm(prompt)
-        print(f"[CHAPTERS RAW RESPONSE]: {raw[:500]}")
-    except Exception as e:
-        print(f"[CHAPTERS GENERATION FAILED]: {e}")
+    except Exception:
         return []
 
     chapters = []
@@ -88,7 +86,6 @@ Chapters:"""
             chapters.append({"start_time": start, "title": title})
 
     chapters.sort(key=lambda c: c["start_time"])
-    print(f"[CHAPTERS PARSED]: {len(chapters)} chapters found")
     return chapters
 
 
@@ -138,8 +135,16 @@ def transcribe_video(video_id: str):
             video.category = detect_category(full_text)
             print(f"Auto-detected category for '{video.title}': {video.category}")
 
+            if video.category == "General":
+                print(f"Category detection fell back to 'General' for '{video.title}' — marking as failed")
+                video.status = VideoStatus.failed
+                db.commit()
+                return
+
+        timestamped_text = "\n".join(timestamped_parts)
+
         db.query(VideoChapter).filter(VideoChapter.video_id == video.id).delete()
-        chapters = generate_chapters("\n".join(timestamped_parts))
+        chapters = generate_chapters(timestamped_text)
         for ch in chapters:
             db.add(VideoChapter(
                 video_id=video.id,
@@ -148,6 +153,19 @@ def transcribe_video(video_id: str):
             ))
         if chapters:
             print(f"Generated {len(chapters)} chapters for '{video.title}'")
+
+        db.query(QuizQuestion).filter(QuizQuestion.video_id == video.id).delete()
+        quiz_questions = generate_quiz_questions(timestamped_text)
+        for q in quiz_questions:
+            db.add(QuizQuestion(
+                video_id=video.id,
+                question=q["question"],
+                options=json.dumps(q["options"]),
+                correct_index=q["correct_index"],
+                timestamp=q["timestamp"],
+            ))
+        if quiz_questions:
+            print(f"Generated {len(quiz_questions)} quiz questions for '{video.title}'")
 
         video.status = VideoStatus.ready
         db.commit()

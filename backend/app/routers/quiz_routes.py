@@ -66,6 +66,8 @@ Questions:"""
 
 
 def ensure_quiz_exists(db: Session, video_id: uuid.UUID) -> list[QuizQuestion]:
+    """Safety net: generates questions on-demand for any video that somehow
+    doesn't have them yet (e.g. uploaded before eager generation was added)."""
     existing = db.query(QuizQuestion).filter(QuizQuestion.video_id == video_id).all()
     if existing:
         return existing
@@ -107,7 +109,7 @@ def get_quiz(
 
     questions = ensure_quiz_exists(db, video_id)
     if not questions:
-        raise HTTPException(status_code=400, detail="Could not generate quiz for this video")
+        raise HTTPException(status_code=400, detail="No quiz available for this video")
 
     return [
         QuizQuestionOut(

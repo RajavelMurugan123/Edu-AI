@@ -6,8 +6,8 @@ from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, s
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models import User, Video, VideoStatus, TranscriptSegment, VideoChapter, QuizQuestion, QuizAttempt, ChatMessage
-from app.schemas import VideoOut, TranscriptSegmentOut, VideoChapterOut
+from app.models import User, UserRole, Video, VideoStatus, TranscriptSegment, VideoChapter, QuizQuestion, QuizAttempt, ChatMessage
+from app.schemas import VideoOut, VideoUpdate, TranscriptSegmentOut, VideoChapterOut
 from app.auth import require_admin, get_current_user
 from app.tasks import transcribe_video
 
@@ -21,15 +21,14 @@ ALLOWED_EXTENSIONS = {".mp4", ".mov", ".mkv", ".avi", ".webm"}
 
 @router.get("", response_model=list[VideoOut])
 def list_videos(
+    category: str | None = None,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    return (
-        db.query(Video)
-        .filter(Video.status == VideoStatus.ready)
-        .order_by(Video.created_at.desc())
-        .all()
-    )
+    query = db.query(Video).filter(Video.status == VideoStatus.ready)
+    if category:
+        query = query.filter(Video.category == category)
+    return query.order_by(Video.created_at.desc()).all()
 
 
 @router.get("/{video_id}", response_model=VideoOut)
@@ -41,6 +40,10 @@ def get_video(
     video = db.query(Video).filter(Video.id == video_id).first()
     if not video:
         raise HTTPException(status_code=404, detail="Video not found")
+
+    if video.status != VideoStatus.ready and current_user.role != UserRole.admin:
+        raise HTTPException(status_code=404, detail="Video not found")
+
     return video
 
 
@@ -50,6 +53,10 @@ def get_video_transcript(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    video = db.query(Video).filter(Video.id == video_id).first()
+    if not video or (video.status != VideoStatus.ready and current_user.role != UserRole.admin):
+        raise HTTPException(status_code=404, detail="Video not found")
+
     return (
         db.query(TranscriptSegment)
         .filter(TranscriptSegment.video_id == video_id)
@@ -64,6 +71,10 @@ def get_video_chapters(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    video = db.query(Video).filter(Video.id == video_id).first()
+    if not video or (video.status != VideoStatus.ready and current_user.role != UserRole.admin):
+        raise HTTPException(status_code=404, detail="Video not found")
+
     return (
         db.query(VideoChapter)
         .filter(VideoChapter.video_id == video_id)
@@ -113,6 +124,78 @@ def upload_video(
         uploaded_by=admin.id,
     )
     db.add(video)
+    db.commit()
+    db.refresh(video)
+
+    transcribe_video.delay(str(video.id))
+
+    return video
+
+
+@router.patch("/{video_id}", response_model=VideoOut)
+def update_video(
+    video_id: uuid.UUID,
+    payload: VideoUpdate,
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_admin),
+):
+    """Edit metadata only — title, category, description. Does not touch the file or re-trigger processing."""
+    video = db.query(Video).filter(Video.id == video_id).first()
+    if not video:
+        raise HTTPException(status_code=404, detail="Video not found")
+
+    if payload.title is not None:
+        video.title = payload.title
+    if payload.category is not None:
+        video.category = payload.category
+    if payload.description is not None:
+        video.description = payload.description
+
+    db.commit()
+    db.refresh(video)
+    return video
+
+
+@router.post("/{video_id}/reupload", response_model=VideoOut)
+def reupload_video(
+    video_id: uuid.UUID,
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_admin),
+):
+    """
+    Replace the video file for an existing entry, keeping its title/category/
+    description, and re-run the full processing pipeline (transcription,
+    embeddings, chapters, quiz) from scratch on the new file.
+    """
+    video = db.query(Video).filter(Video.id == video_id).first()
+    if not video:
+        raise HTTPException(status_code=404, detail="Video not found")
+
+    ext = os.path.splitext(file.filename)[1].lower()
+    if ext not in ALLOWED_EXTENSIONS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported file type '{ext}'. Allowed: {', '.join(ALLOWED_EXTENSIONS)}",
+        )
+
+    old_path = video.file_url.lstrip("/")
+    if os.path.exists(old_path):
+        os.remove(old_path)
+
+    saved_filename = f"{video_id}{ext}"
+    saved_path = os.path.join(UPLOAD_DIR, saved_filename)
+    with open(saved_path, "wb") as buffer:
+        shutil.copyfileobj(file.file, buffer)
+
+    db.query(TranscriptSegment).filter(TranscriptSegment.video_id == video_id).delete()
+    db.query(VideoChapter).filter(VideoChapter.video_id == video_id).delete()
+    db.query(QuizQuestion).filter(QuizQuestion.video_id == video_id).delete()
+    db.query(QuizAttempt).filter(QuizAttempt.video_id == video_id).delete()
+    db.query(ChatMessage).filter(ChatMessage.video_id == video_id).delete()
+
+    video.file_url = f"/uploads/{saved_filename}"
+    video.status = VideoStatus.uploading
     db.commit()
     db.refresh(video)
 

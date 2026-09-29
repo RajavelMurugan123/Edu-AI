@@ -124,14 +124,6 @@ export default function WatchPage() {
     }
   }
 
-  async function handleChatSend(e) {
-    e.preventDefault();
-    const message = chatInput.trim();
-    if (!message) return;
-    setChatInput("");
-    await sendQuestion(message);
-  }
-
   async function handleChip(chip) {
     if (chip.action === "chat") { await sendQuestion(chip.message); return; }
     setChatMessages((prev) => [...prev, { role: "user", text: chip.label }]);
@@ -150,6 +142,23 @@ export default function WatchPage() {
     } catch {
       setChatMessages((prev) => [...prev, { role: "assistant", text: "Something went wrong.", error: true }]);
     } finally { setChatLoading(false); }
+  }
+
+  async function handleChatSend(e) {
+    e.preventDefault();
+    const message = chatInput.trim();
+    if (!message) return;
+    setChatInput("");
+
+    const normalized = message.toLowerCase();
+
+    if (normalized.includes("summar")) {
+      await handleChip({ label: message, action: "summary" });
+    } else if (normalized.includes("related") || normalized.includes("recommend")) {
+      await handleChip({ label: message, action: "related" });
+    } else {
+      await sendQuestion(message);
+    }
   }
 
   async function handleClearChat() {
@@ -182,6 +191,30 @@ export default function WatchPage() {
           <h2 style={{ margin: "16px 0 2px" }}>{video.title}</h2>
           <p style={{ color: "var(--color-text-secondary)", margin: "0 0 16px" }}>{video.category}</p>
 
+          <form onSubmit={handleSearch} className="search-bar" style={{ marginBottom: 4 }}>
+            <input className="input" placeholder="Search this video, e.g. for loop" value={query} onChange={(e) => setQuery(e.target.value)} />
+            <button className="btn btn-primary" type="submit" disabled={searching}>{searching ? "Searching..." : "Search"}</button>
+          </form>
+
+          {searched && !searching && (
+            <div className="search-results-list" style={{ marginBottom: 20 }}>
+              {results.length === 0 ? (
+                <div className="search-results-empty">No relevant moments found for "{query}".</div>
+              ) : (
+                results.map((r, i) => (
+                  <div key={i} className="search-result-card" onClick={() => jumpTo(r.start_time)}>
+                    <div className="search-result-time">{formatTime(r.start_time)}</div>
+                    <div className="search-result-text">"{r.text}"</div>
+                    <div className="search-result-score" title={`Relevance: ${Math.round(r.score * 100)}%`}>
+                      <div className="search-result-score-fill" style={{ width: `${(r.score / maxScore) * 100}%` }} />
+                    </div>
+                    <div className="search-result-jump">Jump →</div>
+                  </div>
+                ))
+              )}
+            </div>
+          )}
+
           {chapters.length > 0 && (
             <div className="card card-pad chapters-card">
               <div className="chapters-header" onClick={() => setChaptersExpanded(!chaptersExpanded)}>
@@ -209,30 +242,6 @@ export default function WatchPage() {
                     </div>
                   ))}
                 </div>
-              )}
-            </div>
-          )}
-
-          <form onSubmit={handleSearch} className="search-bar" style={{ marginBottom: 4 }}>
-            <input className="input" placeholder="Search this video, e.g. for loop" value={query} onChange={(e) => setQuery(e.target.value)} />
-            <button className="btn btn-primary" type="submit" disabled={searching}>{searching ? "Searching..." : "Search"}</button>
-          </form>
-
-          {searched && !searching && (
-            <div className="search-results-list">
-              {results.length === 0 ? (
-                <div className="search-results-empty">No relevant moments found for "{query}".</div>
-              ) : (
-                results.map((r, i) => (
-                  <div key={i} className="search-result-card" onClick={() => jumpTo(r.start_time)}>
-                    <div className="search-result-time">{formatTime(r.start_time)}</div>
-                    <div className="search-result-text">"{r.text}"</div>
-                    <div className="search-result-score" title={`Relevance: ${Math.round(r.score * 100)}%`}>
-                      <div className="search-result-score-fill" style={{ width: `${(r.score / maxScore) * 100}%` }} />
-                    </div>
-                    <div className="search-result-jump">Jump →</div>
-                  </div>
-                ))
               )}
             </div>
           )}

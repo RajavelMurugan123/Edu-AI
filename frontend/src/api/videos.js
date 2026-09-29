@@ -1,7 +1,7 @@
 import api from "./client";
 
-export async function listVideos() {
-  const response = await api.get("/videos");
+export async function listVideos(category) {
+  const response = await api.get("/videos", { params: category ? { category } : {} });
   return response.data;
 }
 
@@ -23,6 +23,20 @@ export async function uploadVideo({ title, description, category, file }) {
   formData.append("file", file);
 
   const response = await api.post("/videos/upload", formData, {
+    headers: { "Content-Type": "multipart/form-data" },
+  });
+  return response.data;
+}
+
+export async function updateVideo(videoId, updates) {
+  const response = await api.patch(`/videos/${videoId}`, updates);
+  return response.data;
+}
+
+export async function reuploadVideo(videoId, file) {
+  const formData = new FormData();
+  formData.append("file", file);
+  const response = await api.post(`/videos/${videoId}/reupload`, formData, {
     headers: { "Content-Type": "multipart/form-data" },
   });
   return response.data;

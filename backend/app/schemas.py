@@ -49,6 +49,12 @@ class VideoOut(BaseModel):
         from_attributes = True
 
 
+class VideoUpdate(BaseModel):
+    title: str | None = None
+    category: str | None = None
+    description: str | None = None
+
+
 class TranscriptSegmentOut(BaseModel):
     id: uuid.UUID
     video_id: uuid.UUID
